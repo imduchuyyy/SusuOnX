@@ -17,13 +17,13 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
+import { DoodleMascot } from "@/components/doodle-mascot";
 
 const RISK_LABELS = [
-  { max: 25, label: "Safe Bet", emoji: "🛡️" },
-  { max: 50, label: "Cautious", emoji: "🧭" },
-  { max: 75, label: "Balanced", emoji: "⚖️" },
-  { max: 100, label: "Ape In", emoji: "🦍" },
+  { max: 25, label: "Safe Bet", emoji: "🛡️", variant: "mint" as const },
+  { max: 50, label: "Cautious", emoji: "🧭", variant: "pastel" as const },
+  { max: 75, label: "Balanced", emoji: "⚖️", variant: "lavender" as const },
+  { max: 100, label: "Ape In", emoji: "🦍", variant: "peach" as const },
 ];
 
 function getRiskInfo(level: number) {
@@ -68,16 +68,19 @@ export function PersonaView() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
+    <div className="mx-auto max-w-2xl px-8 py-6">
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mb-8"
+        className="mb-8 flex items-center justify-between"
       >
-        <h1 className="text-2xl font-bold">Persona Settings</h1>
-        <p className="mt-1 text-muted-foreground">
-          Configure your AI agent&apos;s behavior and risk tolerance
-        </p>
+        <div>
+          <h1 className="text-2xl font-bold text-[#1F2937]">Persona Settings</h1>
+          <p className="mt-1 text-muted-foreground text-sm">
+            Configure your AI agent&apos;s behavior and risk tolerance
+          </p>
+        </div>
+        <DoodleMascot size={64} mood="happy" />
       </motion.div>
 
       <div className="space-y-6">
@@ -92,8 +95,8 @@ export function PersonaView() {
               <CardTitle className="flex items-center justify-between">
                 Risk Level
                 <Badge
-                  variant="outline"
-                  className="bg-primary/10 text-primary border-primary/30"
+                  variant={riskInfo.variant}
+                  className="text-xs font-medium"
                 >
                   {riskInfo.emoji} {riskInfo.label}
                 </Badge>
@@ -103,7 +106,7 @@ export function PersonaView() {
                 yield strategies
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-5">
               <Slider
                 value={[persona.riskLevel]}
                 onValueChange={(value) => {
@@ -114,7 +117,7 @@ export function PersonaView() {
                 step={1}
                 className="w-full"
               />
-              <div className="flex justify-between text-xs text-muted-foreground">
+              <div className="flex justify-between text-xs text-muted-foreground/70">
                 <span>🛡️ Safe Bet</span>
                 <span>🧭 Cautious</span>
                 <span>⚖️ Balanced</span>
@@ -163,10 +166,10 @@ export function PersonaView() {
                 Choose which on-chain actions your AI agent is allowed to execute
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium">Swap</p>
+                  <p className="text-sm font-semibold text-[#1F2937]">Swap</p>
                   <p className="text-xs text-muted-foreground">
                     Allow token swaps on DEXes
                   </p>
@@ -178,10 +181,10 @@ export function PersonaView() {
                   }
                 />
               </div>
-              <Separator />
+              <div className="h-px bg-border/40" />
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium">Bridge</p>
+                  <p className="text-sm font-semibold text-[#1F2937]">Bridge</p>
                   <p className="text-xs text-muted-foreground">
                     Allow cross-chain bridging
                   </p>
@@ -193,10 +196,10 @@ export function PersonaView() {
                   }
                 />
               </div>
-              <Separator />
+              <div className="h-px bg-border/40" />
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium">Deposit</p>
+                  <p className="text-sm font-semibold text-[#1F2937]">Deposit</p>
                   <p className="text-xs text-muted-foreground">
                     Allow deposits into yield vaults
                   </p>
@@ -240,7 +243,7 @@ export function PersonaView() {
         </motion.div>
 
         {!address && (
-          <p className="text-center text-xs text-muted-foreground">
+          <p className="text-center text-xs text-muted-foreground/60 mt-2">
             Connect your wallet to save persona settings
           </p>
         )}

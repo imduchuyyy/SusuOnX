@@ -8,8 +8,6 @@ import {
   type ReactNode,
 } from "react";
 
-export type AppView = "home" | "chat" | "portfolio" | "persona";
-
 export interface PersonaState {
   riskLevel: number;
   systemPrompt: string;
@@ -25,8 +23,10 @@ export interface ConversationPreview {
 }
 
 interface AppState {
-  currentView: AppView;
-  setCurrentView: (view: AppView) => void;
+  chatActive: boolean;
+  setChatActive: (active: boolean) => void;
+  initialChatMessage: string | null;
+  setInitialChatMessage: (msg: string | null) => void;
   activeConversationId: string | null;
   setActiveConversationId: (id: string | null) => void;
   conversations: ConversationPreview[];
@@ -53,7 +53,8 @@ const DEFAULT_PERSONA: PersonaState = {
 };
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [currentView, setCurrentView] = useState<AppView>("home");
+  const [chatActive, setChatActive] = useState(false);
+  const [initialChatMessage, setInitialChatMessage] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState<
     string | null
   >(null);
@@ -83,8 +84,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return (
     <AppContext.Provider
       value={{
-        currentView,
-        setCurrentView,
+        chatActive,
+        setChatActive,
+        initialChatMessage,
+        setInitialChatMessage,
         activeConversationId,
         setActiveConversationId,
         conversations,

@@ -2,20 +2,19 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { type FormEvent, useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { type FormEvent, useState, useRef, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Send,
   Loader2,
   CheckCircle2,
   ExternalLink,
-  Bot,
-  User,
+  ArrowLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { VaultCard } from "@/components/vault-card";
+import { DoodleMascot, MascotIcon } from "@/components/doodle-mascot";
 import { useApp } from "@/providers/app-provider";
 import { STRATEGIES, type Strategy } from "@/lib/strategies";
 import { cn } from "@/lib/utils";
@@ -29,7 +28,7 @@ type TxState =
   | { status: "completed"; strategy: Strategy; txHash: string };
 
 export function ChatView() {
-  const { persona, activeConversationId, setActiveConversationId, addConversation, updateConversationTitle } = useApp();
+  const { persona, activeConversationId, setActiveConversationId, addConversation, updateConversationTitle, initialChatMessage, setInitialChatMessage, setChatActive } = useApp();
   const { address } = useAccount();
 
   const transport = useMemo(
@@ -49,6 +48,26 @@ export function ChatView() {
   const loadedConversationIdRef = useRef<string | null>(null);
 
   const isLoading = status === "streaming" || status === "submitted";
+  const hasSentInitialRef = useRef(false);
+
+  // Auto-send initial message from home search bar
+  useEffect(() => {
+    if (initialChatMessage && !hasSentInitialRef.current) {
+      hasSentInitialRef.current = true;
+      sendMessage({ text: initialChatMessage });
+      setInitialChatMessage(null);
+    }
+  }, [initialChatMessage, sendMessage, setInitialChatMessage]);
+
+  // Reset initial message flag when conversation changes
+  useEffect(() => {
+    hasSentInitialRef.current = false;
+  }, [activeConversationId]);
+
+  function handleBackToHome() {
+    setChatActive(false);
+    setInitialChatMessage(null);
+  }
 
   // Keep ref in sync
   useEffect(() => {
@@ -58,7 +77,6 @@ export function ChatView() {
   // Load existing messages when switching to a conversation
   useEffect(() => {
     if (!activeConversationId) {
-      // New chat — clear messages
       if (loadedConversationIdRef.current !== null) {
         setMessages([]);
         loadedConversationIdRef.current = null;
@@ -67,14 +85,12 @@ export function ChatView() {
     }
 
     if (loadedConversationIdRef.current === activeConversationId) return;
-
     loadedConversationIdRef.current = activeConversationId;
 
     fetch(`/api/conversations/${activeConversationId}/messages`)
       .then((res) => res.json())
       .then((data) => {
         if (data.messages && data.messages.length > 0) {
-          // Convert DB messages to UIMessage format
           const uiMessages: UIMessage[] = data.messages.map(
             (m: { id: string; role: string; content: string; createdAt: string }) => ({
               id: m.id,
@@ -91,14 +107,14 @@ export function ChatView() {
       .catch(console.error);
   }, [activeConversationId, setMessages]);
 
-  // Auto-scroll on new messages
+  // Auto-scroll
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, txState]);
 
-  // Persist messages when they change (after streaming completes)
+  // Persist messages
   const lastPersistedCountRef = useRef(0);
 
   useEffect(() => {
@@ -109,11 +125,9 @@ export function ChatView() {
     const newMessages = messages.slice(lastPersistedCountRef.current);
     lastPersistedCountRef.current = messages.length;
 
-    // Persist new messages
     (async () => {
       let convoId = conversationIdRef.current;
 
-      // Create conversation if needed
       if (!convoId && address) {
         try {
           const res = await fetch("/api/conversations", {
@@ -147,13 +161,12 @@ export function ChatView() {
         if (!content.trim()) continue;
 
         try {
-          const res = await fetch(`/api/conversations/${convoId}/messages`, {
+          await fetch(`/api/conversations/${convoId}/messages`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ role: msg.role, content }),
           });
 
-          // If this was the first user message, the API auto-set the title
           if (msg.role === "user" && messages.indexOf(msg) === 0) {
             const title = content.length > 50 ? content.slice(0, 47) + "..." : content;
             updateConversationTitle(convoId, title);
@@ -165,7 +178,6 @@ export function ChatView() {
     })();
   }, [status, messages, address, setActiveConversationId, addConversation, updateConversationTitle]);
 
-  // Reset persisted count when conversation changes
   useEffect(() => {
     lastPersistedCountRef.current = 0;
   }, [activeConversationId]);
@@ -186,14 +198,12 @@ export function ChatView() {
     const strategy = txState.strategy;
     setTxState({ status: "executing", strategy });
 
-    // Simulate transaction execution
     setTimeout(async () => {
       const mockHash = `0x${Array.from({ length: 64 }, () =>
         Math.floor(Math.random() * 16).toString(16)
       ).join("")}`;
       setTxState({ status: "completed", strategy, txHash: mockHash });
 
-      // Persist the active strategy to the DB
       if (address) {
         try {
           await fetch("/api/strategies", {
@@ -217,84 +227,83 @@ export function ChatView() {
     setTxState({ status: "idle" });
   }
 
-  // Determine which strategies to show as recommendations
   const recommendedStrategies = getStrategiesForRisk(persona.riskLevel);
 
   return (
     <div className="flex h-full flex-col">
+      {/* Back to Home */}
+      <div className="px-8 pt-4 pb-1">
+        <button
+          onClick={handleBackToHome}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors font-medium"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to Home
+        </button>
+      </div>
+
       {/* Messages Area */}
-      <ScrollArea className="flex-1 px-6 py-4" ref={scrollRef}>
-        <div className="mx-auto max-w-2xl space-y-4">
+      <ScrollArea className="flex-1 px-8 py-6" ref={scrollRef}>
+        <div className="mx-auto max-w-2xl space-y-5">
           {messages.length === 0 && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               className="py-12 text-center"
             >
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-                <Bot className="h-6 w-6 text-primary" />
+              <div className="flex justify-center mb-5">
+                <DoodleMascot size={88} mood="happy" />
               </div>
-              <h3 className="text-lg font-semibold">
-                AI Yield Agent
+              <h3 className="text-xl font-bold text-[#1F2937] mb-1">
+                Hey there! I&apos;m your yield buddy
               </h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Tell me about your yield goals and I&apos;ll recommend the best
-                strategies on X Layer.
+              <p className="text-sm text-muted-foreground max-w-sm mx-auto leading-relaxed">
+                Tell me about your yield goals and I&apos;ll find the best
+                strategies on X Layer for you.
               </p>
 
               {/* Recommended Vaults */}
-              <div className="mt-8 text-left">
-                <p className="mb-3 text-sm font-medium text-muted-foreground">
-                  Recommended for you:
-                </p>
-                <div className="grid gap-3">
-                  {recommendedStrategies.map((strategy, i) => (
-                    <VaultCard
-                      key={strategy.id}
-                      strategy={strategy}
-                      index={i}
-                      onDeposit={handleDeposit}
-                    />
-                  ))}
-                </div>
-              </div>
+
             </motion.div>
           )}
 
           {messages.map((message) => (
             <motion.div
               key={message.id}
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
               className={cn(
                 "flex gap-3",
                 message.role === "user" ? "justify-end" : "justify-start"
               )}
             >
               {message.role === "assistant" && (
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                  <Bot className="h-4 w-4 text-primary" />
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-pastel-mint">
+                  <MascotIcon size={20} />
                 </div>
               )}
               <div
                 className={cn(
-                  "max-w-[75%] rounded-2xl px-4 py-2.5 text-sm",
+                  "max-w-[75%] rounded-3xl px-5 py-3 text-sm leading-relaxed",
                   message.role === "user"
-                    ? "bg-primary text-primary-foreground rounded-br-md"
-                    : "bg-card border border-border rounded-bl-md"
+                    ? "bg-primary text-white rounded-br-lg"
+                    : "bg-white border border-border/60 text-[#1F2937] rounded-bl-lg shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
                 )}
               >
                 {message.parts.map((part, i) =>
                   part.type === "text" ? (
-                    <p key={i} className="whitespace-pre-wrap leading-relaxed">
+                    <p key={i} className="whitespace-pre-wrap">
                       {part.text}
                     </p>
                   ) : null
                 )}
               </div>
               {message.role === "user" && (
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary">
-                  <User className="h-4 w-4 text-secondary-foreground" />
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-pastel-blue">
+                  <span className="text-xs font-bold text-[#3730A3]">
+                    {address ? address.slice(2, 4).toUpperCase() : "U"}
+                  </span>
                 </div>
               )}
             </motion.div>
@@ -307,30 +316,30 @@ export function ChatView() {
               animate={{ opacity: 1 }}
               className="flex items-center gap-3"
             >
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                <Bot className="h-4 w-4 text-primary" />
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl bg-pastel-mint">
+                <MascotIcon size={20} />
               </div>
-              <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border bg-card px-4 py-3">
-                <div className="flex gap-1">
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:0ms]" />
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:150ms]" />
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:300ms]" />
+              <div className="flex items-center gap-2 rounded-3xl rounded-bl-lg border border-border/60 bg-white px-5 py-3 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
+                <div className="flex gap-1.5">
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-primary/40 [animation-delay:0ms]" />
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-primary/40 [animation-delay:150ms]" />
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-primary/40 [animation-delay:300ms]" />
                 </div>
               </div>
             </motion.div>
           )}
 
-          {/* Strategy Cards After Conversation */}
+          {/* Strategy Cards */}
           {messages.length > 0 && messages.length % 4 === 0 && txState.status === "idle" && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="space-y-3"
+              className="space-y-4"
             >
-              <p className="text-sm font-medium text-muted-foreground">
-                Based on our conversation, here are my recommendations:
+              <p className="text-xs font-semibold text-muted-foreground/60 uppercase tracking-widest px-1">
+                My recommendations
               </p>
-              <div className="grid gap-3">
+              <div className="grid gap-4">
                 {recommendedStrategies.map((strategy, i) => (
                   <VaultCard
                     key={strategy.id}
@@ -352,111 +361,120 @@ export function ChatView() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="border-t border-border bg-card px-6 py-4"
+            className="mx-8 mb-4"
           >
-            <div className="mx-auto max-w-2xl">
-              {txState.status === "confirming" && (
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">
-                      Deposit into {txState.strategy.name}?
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Min: {txState.strategy.minDeposit} {txState.strategy.token} | APY: {txState.strategy.apy}%
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleDismissTx}
-                    >
-                      Cancel
-                    </Button>
-                    <Button size="sm" onClick={handleConfirmDeposit}>
-                      Confirm Deposit
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {txState.status === "executing" && (
-                <div className="flex items-center gap-3">
-                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                  <div>
-                    <p className="text-sm font-medium">
-                      Solid choice. Executing deposit...
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Submitting transaction to X Layer
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {txState.status === "completed" && (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <CheckCircle2 className="h-5 w-5 text-success" />
+            <div className="card-playful px-6 py-4">
+              <div className="mx-auto max-w-2xl">
+                {txState.status === "confirming" && (
+                  <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium">
-                        Transaction Completed!
+                      <p className="text-sm font-semibold text-[#1F2937]">
+                        Deposit into {txState.strategy.name}?
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Min: {txState.strategy.minDeposit} {txState.strategy.token} | APY: {txState.strategy.apy}%
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleDismissTx}
+                      >
+                        Cancel
+                      </Button>
+                      <Button size="sm" variant="mint" onClick={handleConfirmDeposit}>
+                        Confirm
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {txState.status === "executing" && (
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-pastel-blue">
+                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-[#1F2937]">
+                        Executing deposit...
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Deposited into {txState.strategy.name}
+                        Submitting transaction to X Layer
                       </p>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() =>
-                        window.open(
-                          `https://www.okx.com/explorer/xlayer/tx/${txState.txHash}`,
-                          "_blank"
-                        )
-                      }
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      Onchain Hash
-                    </Button>
-                    <Button size="sm" onClick={handleDismissTx}>
-                      Done
-                    </Button>
+                )}
+
+                {txState.status === "completed" && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-pastel-mint">
+                        <CheckCircle2 className="h-5 w-5 text-[#059669]" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-[#1F2937]">
+                          Transaction Completed!
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Deposited into {txState.strategy.name}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() =>
+                          window.open(
+                            `https://www.okx.com/explorer/xlayer/tx/${txState.txHash}`,
+                            "_blank"
+                          )
+                        }
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        View Tx
+                      </Button>
+                      <Button size="sm" onClick={handleDismissTx}>
+                        Done
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Input Area */}
-      <div className="border-t border-border bg-background px-6 py-4">
+      <div className="px-8 pb-6 pt-2">
         <form
           onSubmit={handleSubmit}
-          className="mx-auto flex max-w-2xl gap-2"
+          className="mx-auto max-w-2xl"
         >
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Tell me about your yield goals..."
-            disabled={isLoading}
-            className="h-10"
-          />
-          <Button
-            type="submit"
-            size="icon"
-            disabled={isLoading || !input.trim()}
-          >
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </Button>
+          <div className="card-playful flex items-center gap-2 px-5 py-2">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Tell me about your yield goals..."
+              disabled={isLoading}
+              className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/50 outline-none py-2 disabled:opacity-50"
+            />
+            <Button
+              type="submit"
+              size="icon"
+              disabled={isLoading || !input.trim()}
+              className="shrink-0"
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
         </form>
       </div>
     </div>

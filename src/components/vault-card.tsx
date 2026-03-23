@@ -16,22 +16,22 @@ import { cn } from "@/lib/utils";
 
 const RISK_CONFIG: Record<
   RiskTier,
-  { icon: typeof Shield; color: string; badgeClass: string }
+  { icon: typeof Shield; badgeVariant: "mint" | "pastel" | "peach"; label: string }
 > = {
   low: {
     icon: Shield,
-    color: "text-success",
-    badgeClass: "bg-success/15 text-success border-success/30",
+    badgeVariant: "mint",
+    label: "Low Risk",
   },
   medium: {
     icon: Zap,
-    color: "text-warning",
-    badgeClass: "bg-warning/15 text-warning-foreground border-warning/30",
+    badgeVariant: "pastel",
+    label: "Medium",
   },
   high: {
     icon: Flame,
-    color: "text-destructive",
-    badgeClass: "bg-destructive/15 text-destructive border-destructive/30",
+    badgeVariant: "peach",
+    label: "High Risk",
   },
 };
 
@@ -55,21 +55,21 @@ export function VaultCard({
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.1, duration: 0.3 }}
+      transition={{ delay: index * 0.1, duration: 0.35, ease: "easeOut" }}
     >
       <Card
         className={cn(
-          "transition-all hover:shadow-md hover:border-primary/30",
+          "transition-all",
           compact ? "w-64 shrink-0" : "w-full"
         )}
       >
         <CardHeader className={compact ? "pb-2" : undefined}>
           <div className="flex items-center justify-between">
-            <Badge variant="outline" className={cn("text-xs", risk.badgeClass)}>
+            <Badge variant={risk.badgeVariant}>
               <RiskIcon className="mr-1 h-3 w-3" />
               {strategy.riskLabel}
             </Badge>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground font-medium">
               TVL {strategy.tvl}
             </span>
           </div>
@@ -82,11 +82,13 @@ export function VaultCard({
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <TrendingUp className="h-4 w-4 text-success" />
-              <span className="text-lg font-bold text-success">
-                {strategy.apy}%
-              </span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 rounded-xl bg-pastel-mint px-2.5 py-1">
+                <TrendingUp className="h-3.5 w-3.5 text-[#059669]" />
+                <span className="text-base font-bold text-[#059669]">
+                  {strategy.apy}%
+                </span>
+              </div>
               <span className="text-xs text-muted-foreground">APY</span>
             </div>
             {onDeposit && (
@@ -96,10 +98,9 @@ export function VaultCard({
             )}
           </div>
           {!compact && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-              <span>Min: {strategy.minDeposit} {strategy.token}</span>
-              <span>|</span>
-              <span>{strategy.protocol}</span>
+            <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="rounded-lg bg-[#F1F5F9] px-2 py-0.5">Min: {strategy.minDeposit} {strategy.token}</span>
+              <span className="rounded-lg bg-[#F1F5F9] px-2 py-0.5">{strategy.protocol}</span>
             </div>
           )}
         </CardContent>
