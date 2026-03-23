@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model AgentWallet {
+  id            String   @id @default(cuid())
+  userAddress   String   @unique
+  agentAddress  String
+  createdAt     DateTime @default(now())
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  userAddress String
+  title     String    @default("New Chat")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  createdAt      DateTime     @default(now())
+}
+
+model PersonaSettings {
+  id              String   @id @default(cuid())
+  userAddress     String   @unique
+  riskLevel       Int      @default(50)
+  systemPrompt    String   @default("")
+  allowSwap       Boolean  @default(true)
+  allowBridge     Boolean  @default(false)
+  allowDeposit    Boolean  @default(true)
+  updatedAt       DateTime @updatedAt
+}
+
+model ActiveStrategy {
+  id            String   @id @default(cuid())
+  userAddress   String
+  strategyId    String
+  depositAmount Float
+  currentValue  Float
+  txHash        String
+  createdAt     DateTime @default(now())
+}
