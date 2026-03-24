@@ -12,7 +12,6 @@ import {
   TOKENS,
   XLAYER_CHAIN_INDEX,
   toMinimalUnits,
-  getActionableStrategy,
 } from "@/lib/strategies";
 
 export const maxDuration = 30;
@@ -103,7 +102,16 @@ BEHAVIOR:
 - When users ask about yield farming, staking, or earning yield, recommend the Uniswap V3 USDT/WOKB pool using the recommend_strategy tool.
 - Match recommendations to risk tolerance: Safe Bet users get a gentle warning about IL risk, Ape In users hear about the upside.
 - When the user wants to deposit, use the prepare_deposit tool to set up the transaction. Always ask how much USDT they want to deposit.
-- When the user wants to exit a yield position, use the prepare_withdraw tool.
+- When the user wants to exit a yield position, use the prepare_withdraw tool. Follow the WITHDRAWING FROM STRATEGY flow below.
+
+WITHDRAWING FROM STRATEGY (Exiting LP Position):
+- When the user says "withdraw from pool", "exit position", "close my LP", "convert WOKB back", etc., this means they want to exit the Uniswap V3 USDT/WOKB strategy.
+- The withdraw reverses the deposit: it swaps WOKB back to USDT via the OKX DEX aggregator.
+- FLOW: (1) First call get_balances to check the user's WOKB balance, (2) Ask the user how much WOKB they want to convert back to USDT (or suggest "all" for a full exit), (3) Call prepare_withdraw with strategyId "uniswap-v3-usdt-wokb" and the WOKB amount.
+- IMPORTANT: Do NOT call prepare_withdraw without first checking the user's WOKB balance. If they have no WOKB, tell them they have no position to exit.
+- If the user says "withdraw all" or "exit completely", use their full WOKB balance as the amount.
+- The client handles the multi-step transaction: approve WOKB spending for DEX router → swap WOKB to USDT.
+- Do NOT explain the technical steps. Just say you'll handle the conversion for them.
 
 SENDING / WITHDRAWING TOKENS:
 - When the user wants to send, transfer, or withdraw tokens to an external address, use the send_token tool.
@@ -201,14 +209,21 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
       // ------------------------------------------------------------------
       // Tool: prepare_withdraw
       // Client-side only — triggers strategy exit flow.
+      // The withdraw reverses the deposit: swaps WOKB back to USDT
+      // via OKX DEX aggregator. Steps: approve WOKB → swap WOKB→USDT.
       // ------------------------------------------------------------------
       prepare_withdraw: tool({
         description:
-          "Prepare a withdrawal from a yield strategy. Call this when the user wants to exit their LP position or yield strategy. This is NOT for simple token transfers — use send_token for that.",
+          "Prepare a withdrawal (exit) from a yield strategy. Call this when the user wants to exit their LP position by swapping WOKB back to USDT. This is NOT for simple token transfers — use send_token for that. Before calling this, check the user's balances with get_balances to verify they have WOKB. The amount is how much WOKB to convert back to USDT.",
         inputSchema: z.object({
           strategyId: z
             .string()
-            .describe("The strategy ID to withdraw from."),
+            .describe("The strategy ID to withdraw from (e.g. 'uniswap-v3-usdt-wokb')."),
+          amount: z
+            .string()
+            .describe(
+              "The amount of WOKB to swap back to USDT (human-readable, e.g. '0.5'). Use the user's full WOKB balance for a complete exit.",
+            ),
         }),
         // No execute → client-side
       }),

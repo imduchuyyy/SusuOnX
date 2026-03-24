@@ -51,10 +51,17 @@ interface DepositFlowState {
   error?: string;
 }
 
+type WithdrawStep = "idle" | "approve" | "swap" | "done";
+
 interface WithdrawFlowState {
   status: "confirming" | "executing" | "completed" | "error";
   strategyId: string;
-  txHash?: string;
+  /** WOKB amount to swap back to USDT */
+  amount: string;
+  /** Current step in the multi-step flow */
+  step: WithdrawStep;
+  /** Transaction hashes for completed steps */
+  txHashes: { approve?: string; swap?: string };
   error?: string;
 }
 
@@ -131,6 +138,10 @@ export function ChatView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const conversationIdRef = useRef<string | null>(activeConversationId);
   const loadedConversationIdRef = useRef<string | null>(null);
+
+  // Track which tool calls we've already handled to prevent duplicate
+  // invocations caused by React re-renders + setTimeout race conditions.
+  const handledToolCallsRef = useRef<Set<string>>(new Set());
 
   const isLoading = status === "streaming" || status === "submitted";
   const hasSentInitialRef = useRef(false);
@@ -509,10 +520,16 @@ export function ChatView() {
   // -------------------------------------------------------------------------
 
   const handleStartWithdraw = useCallback(
-    (strategyId: string, toolCallId: string) => {
+    (strategyId: string, amount: string, toolCallId: string) => {
       setFlowState({
         type: "withdraw",
-        flow: { status: "confirming", strategyId },
+        flow: {
+          status: "confirming",
+          strategyId,
+          amount,
+          step: "idle",
+          txHashes: {},
+        },
       });
 
       addToolOutput({
@@ -521,12 +538,161 @@ export function ChatView() {
         output: {
           status: "awaiting_confirmation",
           strategyId,
-          message: `Withdrawal from ${getStrategy(strategyId)?.name ?? strategyId} is ready for user confirmation.`,
+          amount,
+          message: `Withdrawal of ${amount} WOKB from ${getStrategy(strategyId)?.name ?? strategyId} is ready. This will swap your WOKB back to USDT.`,
         },
       });
     },
     [addToolOutput],
   );
+
+  const executeWithdraw = useCallback(async () => {
+    if (flowState.type !== "withdraw" || flowState.flow.status !== "confirming") return;
+    if (!session) {
+      setFlowState({
+        type: "withdraw",
+        flow: { ...flowState.flow, status: "error", error: "Not authenticated — please sign in first" },
+      });
+      return;
+    }
+
+    const { amount } = flowState.flow;
+
+    // Start executing
+    setFlowState({
+      type: "withdraw",
+      flow: { ...flowState.flow, status: "executing", step: "approve" },
+    });
+
+    try {
+      // Step 1: Approve WOKB spending for the OKX DEX router
+      const amountWei = toMinimalUnits(amount, TOKENS.WOKB.decimals);
+
+      const approveRes = await fetch("/api/swap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "approve",
+          params: {
+            chainIndex: XLAYER_CHAIN_INDEX,
+            tokenContractAddress: TOKENS.WOKB.address,
+            approveAmount: amountWei,
+          },
+        }),
+      });
+
+      if (!approveRes.ok) throw new Error("Failed to get approve transaction");
+
+      const approveData = await approveRes.json();
+      const approveTx = approveData.data?.[0];
+
+      if (approveTx?.data) {
+        // Execute the approve transaction
+        const approveResult = await signAndBroadcast({
+          session,
+          toAddr: approveTx.to || TOKENS.WOKB.address,
+          value: "0",
+          contractAddr: TOKENS.WOKB.address,
+          inputData: approveTx.data,
+          isContractCall: true,
+        });
+
+        setFlowState((prev) => {
+          if (prev.type !== "withdraw") return prev;
+          return {
+            type: "withdraw",
+            flow: {
+              ...prev.flow,
+              step: "swap",
+              txHashes: { ...prev.flow.txHashes, approve: approveResult.txHash },
+            },
+          };
+        });
+
+        // Small delay to let the approval propagate
+        await new Promise((r) => setTimeout(r, 3000));
+      } else {
+        // No approval needed (already approved)
+        setFlowState((prev) => {
+          if (prev.type !== "withdraw") return prev;
+          return {
+            type: "withdraw",
+            flow: { ...prev.flow, step: "swap" },
+          };
+        });
+      }
+
+      // Step 2: Swap WOKB → USDT via OKX DEX
+      const walletAddr =
+        session.addresses.find((a) => a.chainIndex === XLAYER_CHAIN_INDEX)?.address ??
+        session.addresses[0]?.address;
+
+      if (!walletAddr) throw new Error("No wallet address found");
+
+      const swapRes = await fetch("/api/swap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "swap",
+          params: {
+            chainIndex: XLAYER_CHAIN_INDEX,
+            fromTokenAddress: TOKENS.WOKB.address,
+            toTokenAddress: TOKENS.USDT.address,
+            amount: amountWei,
+            userWalletAddress: walletAddr,
+            swapMode: "exactIn",
+            gasLevel: "average",
+            autoSlippage: "true",
+            slippagePercent: "0.5",
+          },
+        }),
+      });
+
+      if (!swapRes.ok) throw new Error("Failed to get swap transaction");
+
+      const swapData = await swapRes.json();
+      const swapTx = swapData.data?.[0]?.tx;
+
+      if (!swapTx) throw new Error("No swap transaction data returned");
+
+      // Execute the swap transaction
+      const swapResult = await signAndBroadcast({
+        session,
+        toAddr: swapTx.to,
+        value: swapTx.value || "0",
+        contractAddr: swapTx.to,
+        inputData: swapTx.data,
+        isContractCall: true,
+      });
+
+      setFlowState({
+        type: "withdraw",
+        flow: {
+          status: "completed",
+          strategyId: flowState.flow.strategyId,
+          amount,
+          step: "done",
+          txHashes: {
+            approve: flowState.flow.txHashes.approve,
+            swap: swapResult.txHash,
+          },
+        },
+      });
+    } catch (err) {
+      console.error("Withdraw flow failed:", err);
+      setFlowState((prev) => {
+        if (prev.type !== "withdraw") return prev;
+        return {
+          type: "withdraw",
+          flow: {
+            ...prev.flow,
+            status: "error",
+            error: err instanceof Error ? err.message : "Transaction failed",
+          },
+        };
+      });
+    }
+  }, [flowState, session]);
 
   // -------------------------------------------------------------------------
   // Send token flow — triggered by send_token tool call
@@ -669,6 +835,11 @@ export function ChatView() {
       ? `tool-${part.toolName}`
       : part.type;
 
+    // Guard: tool parts must have a state property; skip if missing
+    if (typeof toolType === "string" && toolType.startsWith("tool-") && !part.state) {
+      return null;
+    }
+
     // Tool parts — strategy recommendation (server-executed, has output)
     if (toolType === "tool-recommend_strategy") {
       if (part.state === "output-available" && part.output && !part.output.error) {
@@ -744,9 +915,9 @@ export function ChatView() {
         const { strategyId, amount } = part.input;
         const strategy = getStrategy(strategyId);
 
-        // If we haven't started the flow yet for this tool call, start it
-        if (flowState.type === "idle") {
-          // Use setTimeout to avoid setState during render
+        // Guard: only handle each tool call once (ref is synchronous, avoids race)
+        if (!handledToolCallsRef.current.has(part.toolCallId)) {
+          handledToolCallsRef.current.add(part.toolCallId);
           setTimeout(() => handleStartDeposit(strategyId, amount, part.toolCallId), 0);
         }
 
@@ -795,10 +966,13 @@ export function ChatView() {
     // Tool parts — prepare_withdraw (client-side)
     if (toolType === "tool-prepare_withdraw") {
       if (part.state === "input-available") {
-        const { strategyId } = part.input;
+        const { strategyId, amount } = part.input;
+        const strategy = getStrategy(strategyId);
 
-        if (flowState.type === "idle") {
-          setTimeout(() => handleStartWithdraw(strategyId, part.toolCallId), 0);
+        // Guard: only handle each tool call once (ref is synchronous, avoids race)
+        if (!handledToolCallsRef.current.has(part.toolCallId)) {
+          handledToolCallsRef.current.add(part.toolCallId);
+          setTimeout(() => handleStartWithdraw(strategyId, amount, part.toolCallId), 0);
         }
 
         return (
@@ -816,7 +990,10 @@ export function ChatView() {
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Withdraw from {getStrategy(strategyId)?.name ?? strategyId}
+                {amount} WOKB from {strategy?.name ?? strategyId}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Steps: Approve WOKB → Swap WOKB to USDT
               </p>
             </div>
           </motion.div>
@@ -824,6 +1001,15 @@ export function ChatView() {
       }
 
       if (part.state === "output-available") return null;
+
+      if (part.state === "input-streaming") {
+        return (
+          <div key={`${msgId}-withdraw-loading-${partIndex}`} className="my-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Preparing withdrawal...
+          </div>
+        );
+      }
 
       return null;
     }
@@ -833,7 +1019,9 @@ export function ChatView() {
       if (part.state === "input-available") {
         const { tokenSymbol, tokenAddress, amount, toAddress } = part.input;
 
-        if (flowState.type === "idle") {
+        // Guard: only handle each tool call once (ref is synchronous, avoids race)
+        if (!handledToolCallsRef.current.has(part.toolCallId)) {
+          handledToolCallsRef.current.add(part.toolCallId);
           setTimeout(
             () =>
               handleStartSend(tokenSymbol, tokenAddress, amount, toAddress, part.toolCallId),
@@ -1015,7 +1203,18 @@ export function ChatView() {
             </motion.div>
           )}
 
-          {messages.map((message) => {
+          {/* Deduplicate messages by id — AI SDK v6 can temporarily
+              produce two entries with the same id (e.g. during tool-output
+              resubmission). Keep the last occurrence which has the most
+              complete data. */}
+          {(() => {
+            const seen = new Map<string, number>();
+            messages.forEach((m, i) => seen.set(m.id, i));
+            return messages.filter((m, i) => seen.get(m.id) === i);
+          })().map((message) => {
+            // Guard: skip messages without parts array
+            if (!message.parts || !Array.isArray(message.parts)) return null;
+
             // Skip rendering assistant messages with no visible content
             // (happens during submitted/streaming state before text arrives)
             const hasVisibleContent =
@@ -1133,7 +1332,19 @@ export function ChatView() {
               <div className="mx-auto max-w-2xl">
                 <WithdrawFlowUI
                   flow={flowState.flow}
+                  onConfirm={executeWithdraw}
                   onDismiss={handleDismissFlow}
+                  onRetry={() => {
+                    setFlowState({
+                      type: "withdraw",
+                      flow: {
+                        ...flowState.flow,
+                        status: "confirming",
+                        step: "idle",
+                        error: undefined,
+                      },
+                    });
+                  }}
                 />
               </div>
             </div>
@@ -1346,39 +1557,183 @@ function DepositFlowUI({
 }
 
 // ---------------------------------------------------------------------------
-// Withdraw Flow UI Sub-component (strategy exit — stub)
+// Withdraw Flow UI Sub-component (strategy exit — WOKB → USDT swap)
 // ---------------------------------------------------------------------------
 
 function WithdrawFlowUI({
   flow,
+  onConfirm,
   onDismiss,
+  onRetry,
 }: {
   flow: WithdrawFlowState;
+  onConfirm: () => void;
   onDismiss: () => void;
+  onRetry: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
   const strategy = getStrategy(flow.strategyId);
   const name = strategy?.name ?? flow.strategyId;
 
-  return (
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-pastel-lavender">
-          <ArrowRightLeft className="h-5 w-5 text-[#7C3AED]" />
+  function copyTxHash() {
+    const hash = flow.txHashes.swap || flow.txHashes.approve;
+    if (hash) {
+      navigator.clipboard.writeText(hash);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }
+
+  // --- Confirming ---
+  if (flow.status === "confirming") {
+    return (
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-pastel-lavender">
+            <ArrowRightLeft className="h-5 w-5 text-[#7C3AED]" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-[#1F2937]">
+              Withdraw {flow.amount} WOKB?
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Swap WOKB → USDT from {name}
+            </p>
+          </div>
         </div>
-        <div>
-          <p className="text-sm font-semibold text-[#1F2937]">
-            Withdraw from {name}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Strategy exit is currently available through the Portfolio page.
-          </p>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={onDismiss}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={onConfirm}>
+            Confirm Withdraw
+          </Button>
         </div>
       </div>
-      <Button variant="outline" size="sm" onClick={onDismiss}>
-        Got it
-      </Button>
-    </div>
-  );
+    );
+  }
+
+  // --- Executing (multi-step) ---
+  if (flow.status === "executing") {
+    const approving = flow.step === "approve";
+    const swapping = flow.step === "swap";
+    const approveDone = !!flow.txHashes.approve || swapping;
+
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-3 mb-1">
+          <Loader2 className="h-5 w-5 animate-spin text-[#7C3AED]" />
+          <div>
+            <p className="text-sm font-semibold text-[#1F2937]">
+              Withdrawing {flow.amount} WOKB...
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {name}
+            </p>
+          </div>
+        </div>
+        <StepIndicator
+          label="Approve WOKB for DEX router"
+          active={approving}
+          done={approveDone}
+          txHash={flow.txHashes.approve}
+        />
+        <StepIndicator
+          label="Swap WOKB → USDT"
+          active={swapping}
+          done={false}
+          txHash={undefined}
+        />
+      </div>
+    );
+  }
+
+  // --- Completed ---
+  if (flow.status === "completed") {
+    const txHash = flow.txHashes.swap || flow.txHashes.approve || "";
+    return (
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-pastel-mint">
+            <CheckCircle2 className="h-5 w-5 text-[#059669]" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-[#1F2937]">
+              Withdrawal Complete!
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {flow.amount} WOKB swapped to USDT
+            </p>
+            {txHash && (
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-[10px] font-mono text-muted-foreground">
+                  {txHash.slice(0, 12)}...{txHash.slice(-8)}
+                </span>
+                <button
+                  onClick={copyTxHash}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {copied ? <Check className="h-3 w-3 text-[#059669]" /> : <Copy className="h-3 w-3" />}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex gap-2">
+          {txHash && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() =>
+                window.open(
+                  `https://www.okx.com/explorer/xlayer/tx/${txHash}`,
+                  "_blank",
+                )
+              }
+            >
+              <ExternalLink className="h-3 w-3" />
+              Explorer
+            </Button>
+          )}
+          <Button size="sm" onClick={onDismiss}>
+            Done
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Error ---
+  if (flow.status === "error") {
+    return (
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-red-50">
+            <AlertCircle className="h-5 w-5 text-destructive" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-[#1F2937]">
+              Withdrawal Failed
+            </p>
+            <p className="text-xs text-muted-foreground max-w-xs truncate">
+              {flow.error}
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={onDismiss}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={onRetry}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
