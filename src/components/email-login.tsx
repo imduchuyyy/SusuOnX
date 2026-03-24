@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { DoodleMascot } from "@/components/doodle-mascot";
 import { useApp } from "@/providers/app-provider";
 import { generateX25519KeyPair } from "@/lib/okx-crypto";
+import { authInit, authVerify } from "@/lib/okx-api";
 import {
   saveSession,
   type OkxSession,
@@ -46,19 +47,9 @@ export function EmailLogin({ onSuccess }: EmailLoginProps) {
         setX25519PrivateKey(keyPair.privateKeyBase64);
         setX25519PublicKey(keyPair.publicKeyBase64);
 
-        const res = await fetch("/api/auth/init", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: email.trim() }),
-        });
-
-        const data = await res.json();
-
-        if (!res.ok || data.error) {
-          throw new Error(data.error || "Failed to send OTP");
-        }
-
-        setFlowId(data.flowId);
+        // Call OKX directly from browser — no backend proxy
+        const result = await authInit(email.trim());
+        setFlowId(result.flowId);
         setStep("otp");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to send OTP");
@@ -79,22 +70,13 @@ export function EmailLogin({ onSuccess }: EmailLoginProps) {
       setError(null);
 
       try {
-        const res = await fetch("/api/auth/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: email.trim(),
-            flowId,
-            otp: otp.trim(),
-            tempPubKey: x25519PublicKey,
-          }),
-        });
-
-        const data = await res.json();
-
-        if (!res.ok || data.error) {
-          throw new Error(data.error || "Invalid OTP");
-        }
+        // Call OKX directly from browser — no backend proxy
+        const data = await authVerify(
+          email.trim(),
+          flowId,
+          otp.trim(),
+          x25519PublicKey,
+        );
 
         // Build the session object and save to localStorage
         const session: OkxSession = {

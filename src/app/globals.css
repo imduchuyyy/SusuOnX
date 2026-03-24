@@ -199,3 +199,190 @@
   text-underline-offset: 4px;
   text-decoration-thickness: 2px;
 }
+
+/* ===== Chat Markdown Styles ===== */
+/* Styles for AI assistant messages rendered with react-markdown */
+.chat-markdown {
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+/* Remove margin from first/last children to avoid extra spacing in bubbles */
+.chat-markdown > *:first-child {
+  margin-top: 0;
+}
+.chat-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+/* Paragraphs */
+.chat-markdown p {
+  margin: 0.5em 0;
+}
+.chat-markdown p:first-child {
+  margin-top: 0;
+}
+.chat-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+/* Headings */
+.chat-markdown h1 {
+  font-size: 1.25em;
+  font-weight: 700;
+  color: #1F2937;
+  margin: 0.75em 0 0.4em;
+}
+.chat-markdown h2 {
+  font-size: 1.125em;
+  font-weight: 700;
+  color: #1F2937;
+  margin: 0.6em 0 0.3em;
+}
+.chat-markdown h3 {
+  font-size: 1em;
+  font-weight: 600;
+  color: #1F2937;
+  margin: 0.5em 0 0.25em;
+}
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  font-size: 0.95em;
+  font-weight: 600;
+  color: #374151;
+  margin: 0.5em 0 0.2em;
+}
+
+/* Bold & italic */
+.chat-markdown strong {
+  font-weight: 600;
+  color: #1F2937;
+}
+.chat-markdown em {
+  font-style: italic;
+}
+
+/* Links */
+.chat-markdown a {
+  color: #6366F1;
+  text-decoration: underline;
+  text-decoration-color: #C7D2FE;
+  text-underline-offset: 2px;
+  transition: text-decoration-color 0.15s;
+}
+.chat-markdown a:hover {
+  text-decoration-color: #6366F1;
+}
+
+/* Unordered lists */
+.chat-markdown ul {
+  list-style: disc;
+  padding-left: 1.4em;
+  margin: 0.4em 0;
+}
+.chat-markdown ul ul {
+  list-style: circle;
+  margin: 0.15em 0;
+}
+
+/* Ordered lists */
+.chat-markdown ol {
+  list-style: decimal;
+  padding-left: 1.4em;
+  margin: 0.4em 0;
+}
+
+/* List items */
+.chat-markdown li {
+  margin: 0.15em 0;
+}
+.chat-markdown li > p {
+  margin: 0;
+}
+
+/* Inline code */
+.chat-markdown code:not(pre code) {
+  background: #EDE9FE;
+  color: #5B21B6;
+  padding: 0.15em 0.4em;
+  border-radius: 6px;
+  font-size: 0.88em;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* Code blocks */
+.chat-markdown pre {
+  background: #1E293B;
+  color: #E2E8F0;
+  padding: 0.75em 1em;
+  border-radius: 12px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+.chat-markdown pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* Blockquotes */
+.chat-markdown blockquote {
+  border-left: 3px solid #C7D2FE;
+  background: #F5F3FF;
+  padding: 0.5em 0.75em;
+  margin: 0.5em 0;
+  border-radius: 0 8px 8px 0;
+  color: #374151;
+}
+.chat-markdown blockquote p {
+  margin: 0;
+}
+
+/* Horizontal rules */
+.chat-markdown hr {
+  border: none;
+  border-top: 1px solid #E2E8F0;
+  margin: 0.6em 0;
+}
+
+/* Tables */
+.chat-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.9em;
+}
+.chat-markdown thead th {
+  background: #F1F5F9;
+  font-weight: 600;
+  text-align: left;
+  padding: 0.4em 0.6em;
+  border-bottom: 2px solid #E2E8F0;
+  color: #1F2937;
+}
+.chat-markdown tbody td {
+  padding: 0.35em 0.6em;
+  border-bottom: 1px solid #F1F5F9;
+}
+.chat-markdown tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Task lists (GFM) */
+.chat-markdown input[type="checkbox"] {
+  margin-right: 0.4em;
+  accent-color: #6366F1;
+}
+
+/* Images (if any) */
+.chat-markdown img {
+  max-width: 100%;
+  border-radius: 12px;
+  margin: 0.4em 0;
+}

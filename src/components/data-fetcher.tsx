@@ -19,7 +19,10 @@ export function DataFetcher() {
 
     // Fetch conversations (keyed by email now instead of address)
     fetch(`/api/conversations?userAddress=${encodeURIComponent(email)}`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
         if (data.conversations) {
           setConversations(
@@ -37,7 +40,10 @@ export function DataFetcher() {
 
     // Fetch persona settings
     fetch(`/api/persona?userAddress=${encodeURIComponent(email)}`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
         if (data.persona) {
           setFullPersona(data.persona);

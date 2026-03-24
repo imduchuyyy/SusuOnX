@@ -4,10 +4,10 @@
  * Implements the cryptographic primitives needed for the email OTP auth flow:
  * 1. X25519 keypair generation (for HPKE key exchange with OKX TEE)
  * 2. HPKE decryption of the encrypted session signing key
- * 3. Ed25519 signing of transaction hashes
+ * 3. Ed25519 signing (multiple encoding modes matching crypto.rs)
  *
- * Uses @noble/curves for X25519/Ed25519, and hpke-js for HPKE decryption.
- * All operations run in the browser — no server-side crypto needed.
+ * Uses @noble/curves for X25519/Ed25519, @noble/hashes for keccak,
+ * and hpke-js for HPKE decryption. All operations run in the browser.
  *
  * References:
  * - okx/onchainos-skills/cli/src/crypto.rs
@@ -16,6 +16,7 @@
  */
 
 import { x25519, ed25519 } from "@noble/curves/ed25519.js";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import { CipherSuite, Kem, Kdf, Aead } from "hpke-js";
 
 // ---------------------------------------------------------------------------
@@ -109,26 +110,116 @@ export async function decryptSessionKey(
 }
 
 // ---------------------------------------------------------------------------
-// Ed25519 Signing
+// Ed25519 Signing — Low-level
 // ---------------------------------------------------------------------------
 
 /**
- * Sign a message (typically an unsigned transaction hash) with the Ed25519 signing key.
+ * Sign raw bytes with Ed25519 using a 32-byte seed.
+ * Returns raw 64-byte signature as Uint8Array.
+ */
+function ed25519SignRaw(
+  message: Uint8Array,
+  seed: Uint8Array,
+): Uint8Array {
+  return ed25519.sign(message, seed);
+}
+
+/**
+ * Sign a hex-encoded message with Ed25519 (legacy helper, returns hex signature).
  *
- * @param messageHex - Hex-encoded message to sign (e.g. unsignedTxHash, without 0x prefix)
- * @param signingKeyBase64 - Base64-encoded 32-byte Ed25519 seed (from decryptSessionKey)
+ * @param messageHex - Hex-encoded message (with or without 0x prefix)
+ * @param signingKeyBase64 - Base64-encoded 32-byte Ed25519 seed
  * @returns Hex-encoded 64-byte Ed25519 signature
  */
 export function signWithEd25519(
   messageHex: string,
-  signingKeyBase64: string
+  signingKeyBase64: string,
 ): string {
   const seed = base64ToUint8(signingKeyBase64);
   const message = hexToUint8(messageHex);
-
-  // ed25519.sign expects the 32-byte seed (private key)
-  const signature = ed25519.sign(message, seed);
+  const signature = ed25519SignRaw(message, seed);
   return uint8ToHex(signature);
+}
+
+// ---------------------------------------------------------------------------
+// Ed25519 Signing — Encoded variants (matching crypto.rs)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ed25519-sign an encoded message.
+ * Matches crypto.rs `ed25519_sign_encoded`:
+ *   1. Decode message according to `encoding` ("hex", "base64", "base58")
+ *   2. Sign the decoded bytes with Ed25519
+ *   3. Return base64-encoded signature
+ *
+ * @param msg - Encoded message string
+ * @param signingKeyBase64 - Base64-encoded 32-byte Ed25519 seed
+ * @param encoding - "hex" | "base64" | "base58"
+ * @returns Base64-encoded 64-byte signature
+ */
+export function signEncoded(
+  msg: string,
+  signingKeyBase64: string,
+  encoding: string,
+): string {
+  if (!msg) return "";
+
+  let msgBytes: Uint8Array;
+  switch (encoding) {
+    case "hex":
+      msgBytes = hexToUint8(msg);
+      break;
+    case "base64":
+      msgBytes = base64ToUint8(msg);
+      break;
+    case "base58":
+      msgBytes = base58ToUint8(msg);
+      break;
+    default:
+      throw new Error(`Unsupported encoding: ${encoding}, expected hex/base64/base58`);
+  }
+
+  const seed = base64ToUint8(signingKeyBase64);
+  const signature = ed25519SignRaw(msgBytes, seed);
+  return uint8ToBase64(signature);
+}
+
+/**
+ * EIP-191 personal_sign + Ed25519.
+ * Matches crypto.rs `ed25519_sign_eip191`:
+ *   1. Decode hex hash to raw bytes
+ *   2. Build EIP-191 prefix: "\x19Ethereum Signed Message:\n{len}" + data
+ *   3. Keccak-256 the prefixed message
+ *   4. Ed25519 sign the keccak hash with the raw seed bytes
+ *   5. Return base64-encoded signature
+ *
+ * @param hexHash - Hex-encoded hash (with or without 0x prefix)
+ * @param signingSeed - Raw 32-byte Ed25519 seed (Uint8Array, NOT base64)
+ * @returns Base64-encoded 64-byte signature
+ */
+export function signEip191(
+  hexHash: string,
+  signingSeed: Uint8Array,
+): string {
+  const clean = hexHash.startsWith("0x") ? hexHash.slice(2) : hexHash;
+  if (!clean) return "";
+
+  const data = hexToUint8(clean);
+
+  // Build EIP-191 message
+  const prefix = new TextEncoder().encode(
+    `\x19Ethereum Signed Message:\n${data.length}`,
+  );
+  const ethMsg = new Uint8Array(prefix.length + data.length);
+  ethMsg.set(prefix, 0);
+  ethMsg.set(data, prefix.length);
+
+  // Keccak-256
+  const hash = keccak_256(ethMsg);
+
+  // Sign with raw seed and return base64
+  const signature = ed25519SignRaw(hash, signingSeed);
+  return uint8ToBase64(signature);
 }
 
 // ---------------------------------------------------------------------------
@@ -165,4 +256,34 @@ export function hexToUint8(hex: string): Uint8Array {
     bytes[i / 2] = parseInt(clean.substring(i, i + 2), 16);
   }
   return bytes;
+}
+
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+export function base58ToUint8(str: string): Uint8Array {
+  if (!str) return new Uint8Array(0);
+  // Count leading '1's (= leading zero bytes)
+  let leadingZeros = 0;
+  for (let i = 0; i < str.length && str[i] === "1"; i++) leadingZeros++;
+
+  // Decode base58 to big integer
+  let num = BigInt(0);
+  for (let i = 0; i < str.length; i++) {
+    const idx = BASE58_ALPHABET.indexOf(str[i]);
+    if (idx < 0) throw new Error(`Invalid base58 character: ${str[i]}`);
+    num = num * BigInt(58) + BigInt(idx);
+  }
+
+  // Convert big integer to bytes
+  const hex = num === BigInt(0) ? "" : num.toString(16);
+  const padded = hex.length % 2 ? "0" + hex : hex;
+  const dataBytes = new Uint8Array(padded.length / 2);
+  for (let i = 0; i < padded.length; i += 2) {
+    dataBytes[i / 2] = parseInt(padded.substring(i, i + 2), 16);
+  }
+
+  // Prepend leading zero bytes
+  const result = new Uint8Array(leadingZeros + dataBytes.length);
+  result.set(dataBytes, leadingZeros);
+  return result;
 }
