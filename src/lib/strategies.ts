@@ -31,6 +31,18 @@ export const TOKENS = {
     address: "0x779ded0c9e1022225f8e0630b35a9b54be713736",
     decimals: 6,
   },
+  /** USD Coin (bridged) */
+  USDC: {
+    symbol: "USDC",
+    address: "0x74b7f16337b8972027f6196a17a631ac6de26d22",
+    decimals: 6,
+  },
+  /** OKX Wrapped BTC */
+  xBTC: {
+    symbol: "xBTC",
+    address: "0xb7c00000bcdeef966b20b3d884b98e64d2b06b4f",
+    decimals: 8,
+  },
 } as const;
 
 export type TokenSymbol = keyof typeof TOKENS;
@@ -106,32 +118,58 @@ export const STRATEGIES: Strategy[] = [
     },
   },
   {
-    id: "okb-staking",
-    name: "OKB Staking",
-    protocol: "OKX Earn",
+    id: "uniswap-v3-usdc-wokb",
+    name: "Uniswap V3 USDC/OKB",
+    protocol: "Uniswap V3",
     description:
-      "Stake OKB tokens for steady yield. Low risk with auto-compounding rewards on X Layer.",
-    apy: 5.2,
-    risk: "low",
-    riskLabel: "Safe Bet",
-    tvl: "$12.4M",
-    minDeposit: 1,
-    token: "OKB",
-    actionable: false,
+      "Provide liquidity to the USDC/OKB pair on Uniswap V3 on X Layer. " +
+      "A low-fee (0.05%) pool ideal for high-volume OKB trading with tighter spreads.",
+    apy: 7.2,
+    risk: "medium",
+    riskLabel: "Balanced",
+    tvl: "$850K",
+    minDeposit: 5,
+    token: "USDC",
+    poolAddress: "0x92ae4136f5f141f9d20eaa0c3533f48c21fa8580",
+    poolTokens: { tokenA: "USDC", tokenB: "WOKB" },
+    actionable: true,
+    defiTokens: {
+      tokenA: {
+        address: "0x74b7f16337b8972027f6196a17a631ac6de26d22",
+        symbol: "USDC",
+      },
+      tokenB: {
+        address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        symbol: "OKB",
+      },
+    },
   },
   {
-    id: "leveraged-yield",
-    name: "Leveraged OKB Yield",
-    protocol: "DeFi Alpha",
+    id: "uniswap-v3-usdt-xbtc",
+    name: "Uniswap V3 USDT/xBTC",
+    protocol: "Uniswap V3",
     description:
-      "Leveraged yield farming on emerging X Layer protocols. Higher risk with potential for outsized returns.",
-    apy: 42.5,
+      "Provide liquidity to the USDT/xBTC pair on Uniswap V3 on X Layer. " +
+      "Earn fees from BTC/stablecoin trading. Higher risk due to BTC price volatility but strong demand.",
+    apy: 12.5,
     risk: "high",
     riskLabel: "Ape In",
-    tvl: "$1.2M",
-    minDeposit: 100,
-    token: "OKB",
-    actionable: false,
+    tvl: "$420K",
+    minDeposit: 10,
+    token: "USDT",
+    poolAddress: "0x5fcfb33c9ab1665fee892eb2af163e863a874d73",
+    poolTokens: { tokenA: "USDT", tokenB: "xBTC" },
+    actionable: true,
+    defiTokens: {
+      tokenA: {
+        address: "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+        symbol: "USDT",
+      },
+      tokenB: {
+        address: "0xb7c00000bcdeef966b20b3d884b98e64d2b06b4f",
+        symbol: "xBTC",
+      },
+    },
   },
 ];
 
@@ -156,6 +194,10 @@ export function getRecommendedStrategies(riskLevel: number): Strategy[] {
 
 export function getActionableStrategy(): Strategy {
   return STRATEGIES.find((s) => s.actionable)!;
+}
+
+export function getActionableStrategies(): Strategy[] {
+  return STRATEGIES.filter((s) => s.actionable);
 }
 
 /**

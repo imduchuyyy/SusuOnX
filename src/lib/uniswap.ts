@@ -41,10 +41,29 @@ export const TOKENS = {
     decimals: 6,
     symbol: "USDT",
   },
+  USDC: {
+    address: "0x74b7f16337b8972027f6196a17a631ac6de26d22",
+    decimals: 6,
+    symbol: "USDC",
+  },
+  xBTC: {
+    address: "0xb7c00000bcdeef966b20b3d884b98e64d2b06b4f",
+    decimals: 8,
+    symbol: "xBTC",
+  },
 } as const;
 
-/** The main pool we interact with */
+/** Known Uniswap V3 pools on X Layer */
 export const USDT_WOKB_POOL = "0x63d62734847E55A266FCa4219A9aD0a02D5F6e02";
+export const USDC_WOKB_POOL = "0x92ae4136f5f141f9d20eaa0c3533f48c21fa8580";
+export const USDT_XBTC_POOL = "0x5fcfb33c9ab1665fee892eb2af163e863a874d73";
+
+/** Map pool address → fee tier for quick lookup */
+export const POOL_FEES: Record<string, number> = {
+  [USDT_WOKB_POOL.toLowerCase()]: 3000,   // 0.3%
+  [USDC_WOKB_POOL.toLowerCase()]: 500,    // 0.05%
+  [USDT_XBTC_POOL.toLowerCase()]: 500,    // 0.05%
+};
 
 // ---------------------------------------------------------------------------
 // ABIs (minimal — only the functions we need)

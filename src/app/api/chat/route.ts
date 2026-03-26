@@ -26,6 +26,8 @@ import {
   UNISWAP_V3,
   TOKENS,
   USDT_WOKB_POOL,
+  USDC_WOKB_POOL,
+  USDT_XBTC_POOL,
 } from "@/lib/uniswap";
 
 export const maxDuration = 120;
@@ -37,6 +39,16 @@ const OKX_SECRET_KEY = process.env.OKX_SECRET_KEY ?? "";
 const OKX_PASSPHRASE = process.env.OKX_PASSPHRASE ?? "";
 
 const XLAYER_CHAIN_INDEX = "196";
+
+/** Map a pool name (e.g. "USDT/WOKB") to its address */
+const POOL_MAP: Record<string, string> = {
+  "USDT/WOKB": USDT_WOKB_POOL,
+  "WOKB/USDT": USDT_WOKB_POOL,
+  "USDC/WOKB": USDC_WOKB_POOL,
+  "WOKB/USDC": USDC_WOKB_POOL,
+  "USDT/xBTC": USDT_XBTC_POOL,
+  "xBTC/USDT": USDT_XBTC_POOL,
+};
 
 function getOkxHeaders(
   method: string,
@@ -92,10 +104,16 @@ KNOWN TOKENS ON X LAYER:
 - OKB (native gas token): no contract address, 18 decimals
 - WOKB (Wrapped OKB): ${TOKENS.WOKB.address}, 18 decimals  
 - USDT: ${TOKENS.USDT.address}, 6 decimals
+- USDC: ${TOKENS.USDC.address}, 6 decimals
+- xBTC (OKX Wrapped BTC): ${TOKENS.xBTC.address}, 8 decimals
 
 AVAILABLE UNISWAP V3 POOLS ON X LAYER:
-- USDT/WOKB pool: ${USDT_WOKB_POOL} (~9.76% APY, TVL $2.3M)
-  Token0: USDT, Token1: WOKB, Fee tier: 3000 (0.3%)
+1. USDT/WOKB pool: ${USDT_WOKB_POOL} (~9.76% APY, TVL $2.3M)
+   Token0: USDT, Token1: WOKB, Fee tier: 3000 (0.3%)
+2. USDC/WOKB pool: ${USDC_WOKB_POOL} (~7.2% APY, TVL $850K)
+   Token0: USDC, Token1: WOKB, Fee tier: 500 (0.05%)
+3. USDT/xBTC pool: ${USDT_XBTC_POOL} (~12.5% APY, TVL $420K)
+   Token0: USDT, Token1: xBTC, Fee tier: 500 (0.05%)
 
 YOUR CAPABILITIES (tools available):
 1. get_balances — Check the user's wallet balances on X Layer
@@ -107,14 +125,19 @@ YOUR CAPABILITIES (tools available):
 
 IMPORTANT BEHAVIORAL RULES:
 
-1. When the user asks about earning yield, recommend the USDT/WOKB Uniswap V3 pool. Explain the APY and risks (impermanent loss).
+1. When the user asks about earning yield, present ALL available pools with their APY, risk level, and TVL:
+   - USDT/WOKB: ~9.76% APY, medium risk (impermanent loss from OKB price moves)
+   - USDC/WOKB: ~7.2% APY, medium risk, lower fees (0.05%) good for tighter spreads
+   - USDT/xBTC: ~12.5% APY, higher risk (BTC volatility + impermanent loss)
+   Help the user choose based on their risk tolerance and token holdings.
 
 2. When the user wants to deposit into a Uniswap pool:
-   a. First call get_balances to check what tokens they have
-   b. The pool needs BOTH USDT and WOKB. Check if they have both.
-   c. If they only have one side (e.g. only USDT), tell them you'll swap half to get both tokens, then ask for confirmation.
-   d. Once confirmed, execute the steps: swap if needed, approve tokens, then add_liquidity.
-   e. IMPORTANT: You MUST get explicit user confirmation before executing any swap or deposit. Say exactly what you'll do and wait for "yes" or confirmation.
+   a. First ask which pool they want (or recommend based on their risk profile).
+   b. Call get_balances to check what tokens they have.
+   c. The pool needs BOTH tokens of the pair. Check if they have both.
+   d. If they only have one side, tell them you'll swap half to get both tokens, then ask for confirmation.
+   e. Once confirmed, execute the steps: swap if needed, approve tokens, then add_liquidity with the chosen pool.
+   f. IMPORTANT: You MUST get explicit user confirmation before executing any swap or deposit. Say exactly what you'll do and wait for "yes" or confirmation.
 
 3. When the user wants to withdraw/exit a pool position, or asks about their positions:
    a. ALWAYS call get_positions first to find all their LP positions with amounts and fees.
@@ -218,11 +241,13 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
             }
 
             // Fallback: direct RPC balance check
-            const [nativeBalance, usdtBalance, wokbBalance] =
+            const [nativeBalance, usdtBalance, wokbBalance, usdcBalance, xbtcBalance] =
               await Promise.all([
                 getNativeBalance(walletAddress),
                 getTokenBalance(TOKENS.USDT.address, walletAddress),
                 getTokenBalance(TOKENS.WOKB.address, walletAddress),
+                getTokenBalance(TOKENS.USDC.address, walletAddress),
+                getTokenBalance(TOKENS.xBTC.address, walletAddress),
               ]);
 
             const balances = [];
@@ -248,6 +273,22 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
                 balance: formatAmount(wokbBalance, 18),
                 usdValue: "0",
                 tokenAddress: TOKENS.WOKB.address,
+              });
+            }
+            if (usdcBalance > 0n) {
+              balances.push({
+                symbol: "USDC",
+                balance: formatAmount(usdcBalance, 6),
+                usdValue: formatAmount(usdcBalance, 6),
+                tokenAddress: TOKENS.USDC.address,
+              });
+            }
+            if (xbtcBalance > 0n) {
+              balances.push({
+                symbol: "xBTC",
+                balance: formatAmount(xbtcBalance, 8),
+                usdValue: "0",
+                tokenAddress: TOKENS.xBTC.address,
               });
             }
 
@@ -339,13 +380,13 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
       // ================================================================
       swap_token: tool({
         description:
-          "Swap tokens on Uniswap V3 on X Layer. Use this to swap between USDT and WOKB. The swap is executed through the Uniswap V3 SwapRouter. Call this when user wants to swap tokens, or when you need to prepare tokens for a liquidity deposit (e.g. swap half of USDT to WOKB before adding liquidity).",
+          "Swap tokens on Uniswap V3 on X Layer. Supported tokens: USDT, WOKB, USDC, xBTC. The correct pool is selected automatically based on the token pair. Call this when user wants to swap tokens, or when you need to prepare tokens for a liquidity deposit.",
         inputSchema: z.object({
           fromToken: z
-            .enum(["USDT", "WOKB"])
+            .enum(["USDT", "WOKB", "USDC", "xBTC"])
             .describe("Token to swap from."),
           toToken: z
-            .enum(["USDT", "WOKB"])
+            .enum(["USDT", "WOKB", "USDC", "xBTC"])
             .describe("Token to swap to."),
           amount: z
             .string()
@@ -373,6 +414,16 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
             return { error: true, message: "Unknown token." };
           }
 
+          // Resolve the correct pool for this token pair
+          const poolKey = `${fromToken}/${toToken}`;
+          const poolAddress = POOL_MAP[poolKey];
+          if (!poolAddress) {
+            return {
+              error: true,
+              message: `No direct pool found for ${fromToken}/${toToken}. Try swapping through USDT first.`,
+            };
+          }
+
           try {
             const amountIn = parseAmount(amount, fromTokenInfo.decimals);
 
@@ -386,7 +437,7 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
             }
 
             // Step 2: Get quote
-            const poolInfo = await getPoolInfo(USDT_WOKB_POOL);
+            const poolInfo = await getPoolInfo(poolAddress);
             const expectedOut = await quoteSwap(
               fromTokenInfo.address,
               toTokenInfo.address,
@@ -464,16 +515,19 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
       // ================================================================
       add_liquidity: tool({
         description:
-          "Add liquidity to the USDT/WOKB Uniswap V3 pool on X Layer. This creates a new LP position. Both USDT and WOKB must be in the wallet. The position uses full-range ticks. Call this after ensuring the user has both tokens (swap first if needed).",
+          "Add liquidity to a Uniswap V3 pool on X Layer. Supported pools: USDT/WOKB, USDC/WOKB, USDT/xBTC. Creates a new LP position with full-range ticks. Both tokens of the pair must be in the wallet. Call this after ensuring the user has both tokens (swap first if needed).",
         inputSchema: z.object({
-          amountUSDT: z
+          pool: z
+            .enum(["USDT/WOKB", "USDC/WOKB", "USDT/xBTC"])
+            .describe("Which pool to add liquidity to."),
+          amountA: z
             .string()
-            .describe("Amount of USDT to provide as liquidity (human-readable, e.g. '100')."),
-          amountWOKB: z
+            .describe("Amount of the first token (USDT or USDC) to provide as liquidity (human-readable, e.g. '100')."),
+          amountB: z
             .string()
-            .describe("Amount of WOKB to provide as liquidity (human-readable, e.g. '5.5')."),
+            .describe("Amount of the second token (WOKB or xBTC) to provide as liquidity (human-readable, e.g. '5.5')."),
         }),
-        execute: async ({ amountUSDT, amountWOKB }) => {
+        execute: async ({ pool, amountA, amountB }) => {
           if (!clientSession) {
             return { error: true, message: "Not authenticated. Please sign in first." };
           }
@@ -483,91 +537,102 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
           }
 
           try {
-            const poolInfo = await getPoolInfo(USDT_WOKB_POOL);
+            // Resolve pool address and token info
+            const poolAddress = POOL_MAP[pool];
+            if (!poolAddress) {
+              return { error: true, message: `Unknown pool: ${pool}.` };
+            }
+            const [symbolA, symbolB] = pool.split("/") as [string, string];
+            const tokenAInfo = TOKENS[symbolA as keyof typeof TOKENS];
+            const tokenBInfo = TOKENS[symbolB as keyof typeof TOKENS];
+            if (!tokenAInfo || !tokenBInfo) {
+              return { error: true, message: "Unknown token in pool pair." };
+            }
+
+            const poolInfo = await getPoolInfo(poolAddress);
             const { tickLower, tickUpper } = getFullRangeTicks(
               poolInfo.tickSpacing,
             );
 
             // Determine token ordering (Uniswap requires token0 < token1)
             const token0 = poolInfo.token0.toLowerCase();
-            const token1 = poolInfo.token1.toLowerCase();
 
-            const isUSDTToken0 =
-              token0 === TOKENS.USDT.address.toLowerCase();
+            const isAToken0 =
+              token0 === tokenAInfo.address.toLowerCase();
 
             let amount0: bigint, amount1: bigint;
             let token0Addr: string, token1Addr: string;
 
-            if (isUSDTToken0) {
-              amount0 = parseAmount(amountUSDT, TOKENS.USDT.decimals);
-              amount1 = parseAmount(amountWOKB, TOKENS.WOKB.decimals);
-              token0Addr = TOKENS.USDT.address;
-              token1Addr = TOKENS.WOKB.address;
+            if (isAToken0) {
+              amount0 = parseAmount(amountA, tokenAInfo.decimals);
+              amount1 = parseAmount(amountB, tokenBInfo.decimals);
+              token0Addr = tokenAInfo.address;
+              token1Addr = tokenBInfo.address;
             } else {
-              amount0 = parseAmount(amountWOKB, TOKENS.WOKB.decimals);
-              amount1 = parseAmount(amountUSDT, TOKENS.USDT.decimals);
-              token0Addr = TOKENS.WOKB.address;
-              token1Addr = TOKENS.USDT.address;
+              amount0 = parseAmount(amountB, tokenBInfo.decimals);
+              amount1 = parseAmount(amountA, tokenAInfo.decimals);
+              token0Addr = tokenBInfo.address;
+              token1Addr = tokenAInfo.address;
             }
 
             // Check balances
-            const usdtBalance = await getTokenBalance(TOKENS.USDT.address, wallet);
-            const wokbBalance = await getTokenBalance(TOKENS.WOKB.address, wallet);
+            const balanceA = await getTokenBalance(tokenAInfo.address, wallet);
+            const balanceB = await getTokenBalance(tokenBInfo.address, wallet);
 
-            const neededUSDT = parseAmount(amountUSDT, TOKENS.USDT.decimals);
-            const neededWOKB = parseAmount(amountWOKB, TOKENS.WOKB.decimals);
+            const neededA = parseAmount(amountA, tokenAInfo.decimals);
+            const neededB = parseAmount(amountB, tokenBInfo.decimals);
 
-            if (usdtBalance < neededUSDT) {
+            if (balanceA < neededA) {
               return {
                 error: true,
-                message: `Insufficient USDT. Have ${formatAmount(usdtBalance, TOKENS.USDT.decimals)}, need ${amountUSDT}.`,
+                message: `Insufficient ${symbolA}. Have ${formatAmount(balanceA, tokenAInfo.decimals)}, need ${amountA}.`,
               };
             }
-            if (wokbBalance < neededWOKB) {
+            if (balanceB < neededB) {
               return {
                 error: true,
-                message: `Insufficient WOKB. Have ${formatAmount(wokbBalance, TOKENS.WOKB.decimals)}, need ${amountWOKB}.`,
+                message: `Insufficient ${symbolB}. Have ${formatAmount(balanceB, tokenBInfo.decimals)}, need ${amountB}.`,
               };
             }
 
-            // Approve USDT for NonfungiblePositionManager
-            const usdtAllowance = await getAllowance(
-              TOKENS.USDT.address,
+            // Approve token A for NonfungiblePositionManager
+            const allowanceA = await getAllowance(
+              tokenAInfo.address,
               wallet,
               UNISWAP_V3.positionManager,
             );
-            if (usdtAllowance < neededUSDT) {
+            if (allowanceA < neededA) {
               const approveData = encodeApprove(
                 UNISWAP_V3.positionManager,
-                neededUSDT * 2n,
+                neededA * 2n,
               );
               const approveTx = await serverSignAndBroadcast({
                 session: clientSession,
-                toAddr: TOKENS.USDT.address,
+                toAddr: tokenAInfo.address,
                 value: "0",
-                contractAddr: TOKENS.USDT.address,
+                contractAddr: tokenAInfo.address,
                 inputData: approveData,
                 isContractCall: true,
               });
               await waitForTx(approveTx.txHash);
             }
 
-            // Approve WOKB for NonfungiblePositionManager
-            const wokbAllowance = await getAllowance(
-              TOKENS.WOKB.address,
+            // Approve token B for NonfungiblePositionManager
+            const allowanceB = await getAllowance(
+              tokenBInfo.address,
               wallet,
               UNISWAP_V3.positionManager,
             );
-            if (wokbAllowance < neededWOKB) {
+            if (allowanceB < neededB) {
               const approveData = encodeApprove(
                 UNISWAP_V3.positionManager,
-                neededWOKB * 2n,
+                neededB * 2n,
               );
               const approveTx = await serverSignAndBroadcast({
                 session: clientSession,
-                toAddr: TOKENS.WOKB.address,
+                toAddr: tokenBInfo.address,
                 value: "0",
-                contractAddr: TOKENS.WOKB.address,
+                contractAddr: tokenBInfo.address,
                 inputData: approveData,
                 isContractCall: true,
               });
@@ -583,7 +648,7 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
               tickUpper,
               amount0Desired: amount0,
               amount1Desired: amount1,
-              amount0Min: 0n, // Accept any amount (slippage handled by pool)
+              amount0Min: 0n,
               amount1Min: 0n,
               recipient: wallet,
             });
@@ -600,9 +665,9 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
             return {
               error: false,
               action: "add_liquidity",
-              pool: "USDT/WOKB",
-              amountUSDT,
-              amountWOKB,
+              pool,
+              [`amount${symbolA}`]: amountA,
+              [`amount${symbolB}`]: amountB,
               txHash: mintResult.txHash,
               explorerUrl: `https://www.okx.com/explorer/xlayer/tx/${mintResult.txHash}`,
             };
@@ -739,10 +804,10 @@ ${persona?.systemPrompt ? `\nADDITIONAL USER INSTRUCTIONS:\n${persona.systemProm
       // ================================================================
       withdraw_to_address: tool({
         description:
-          "Send/transfer/withdraw tokens from the agent wallet to an external address on X Layer. Use for OKB (native), USDT, or WOKB transfers.",
+          "Send/transfer/withdraw tokens from the agent wallet to an external address on X Layer. Use for OKB (native), USDT, WOKB, USDC, or xBTC transfers.",
         inputSchema: z.object({
           token: z
-            .enum(["OKB", "USDT", "WOKB"])
+            .enum(["OKB", "USDT", "WOKB", "USDC", "xBTC"])
             .describe("Token to send."),
           amount: z
             .string()
